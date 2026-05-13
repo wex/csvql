@@ -1,0 +1,47 @@
+{
+    "name": "phi/csvql",
+    "description": "SQLite powered CSV reader",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.5",
+        "ext-pdo": "*",
+        "ext-sqlite3": "*"
+    },
+    "require-dev": {
+        "pestphp/pest": "^4.4",
+        "laravel/pint": "^1.29",
+        "phpstan/phpstan": "^2.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Phi\\CSVql\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Niko Hujanen",
+            "email": "niko.hujanen@gmail.com"
+        }
+    ],
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "ci": [
+            "@analyze",
+            "@lint",
+            "@test"
+        ],
+        "test": "pest",
+        "lint": "pint",
+        "analyze": "phpstan analyze src"
+    }
+}
