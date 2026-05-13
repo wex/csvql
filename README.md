@@ -135,6 +135,62 @@ foreach ($csv as $row) {
 }
 ```
 
+## Quality Assurance
+
+This project includes several tools to ensure code quality:
+
+### Running Tests
+
+Tests are written using [Pest](https://pestphp.com/). To run the test suite:
+
+```bash
+composer test
+```
+
+Or directly with Pest:
+
+```bash
+./vendor/bin/pest
+```
+
+### Code Style
+
+[Laravel Pint](https://github.com/laravel/pint) is used for code formatting and linting. To check and fix code style issues:
+
+```bash
+composer lint
+```
+
+Or directly with Pint:
+
+```bash
+./vendor/bin/pint
+```
+
+### Static Analysis
+
+[PHPStan](https://phpstan.org/) is used for static analysis at level 6. To run static analysis:
+
+```bash
+composer analyze
+```
+
+Or directly with PHPStan:
+
+```bash
+./vendor/bin/phpstan analyze src
+```
+
+### Running All Checks
+
+To run all quality checks (static analysis, linting, and tests) in sequence:
+
+```bash
+composer ci
+```
+
+This is the command used in the CI pipeline and should be run before committing changes.
+
 ## API Reference
 
 ### Constructor
