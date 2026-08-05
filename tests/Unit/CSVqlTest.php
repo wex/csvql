@@ -2,6 +2,31 @@
 
 use Phi\CSVql\CSVql;
 
+/**
+ * Stream wrapper that satisfies file_exists() and is_readable() via url_stat()
+ * but always returns false from stream_open(), simulating an fopen() race failure.
+ */
+final class FailingOpenStreamWrapper
+{
+    /** @var resource|null Required by the PHP stream wrapper contract */
+    public $context;
+
+    public function url_stat(string $path, int $flags): array
+    {
+        return [
+            'dev' => 0, 'ino' => 0, 'mode' => 0100777,
+            'nlink' => 1, 'uid' => 0, 'gid' => 0,
+            'rdev' => 0, 'size' => 0, 'atime' => 0,
+            'mtime' => 0, 'ctime' => 0, 'blksize' => -1, 'blocks' => -1,
+        ];
+    }
+
+    public function stream_open(string $path, string $mode, int $options, ?string &$openedPath): bool
+    {
+        return false;
+    }
+}
+
 beforeEach(function () {
     $this->csvFile = tempnam(sys_get_temp_dir(), 'csvql_');
 
@@ -66,6 +91,17 @@ test('import throws for empty file', function () {
         expect(fn () => new CSVql($file))->toThrow(RuntimeException::class);
     } finally {
         unlink($file);
+    }
+});
+
+test('import throws when fopen fails after existence check', function () {
+    stream_wrapper_register('failopen', FailingOpenStreamWrapper::class);
+
+    try {
+        expect(fn () => new CSVql('failopen://fake.csv'))
+            ->toThrow(RuntimeException::class, 'Failed to open file');
+    } finally {
+        stream_wrapper_unregister('failopen');
     }
 });
 
@@ -175,6 +211,23 @@ test('where() throws for invalid operator', function () {
     expect(fn () => $this->csv->where('id', 1, 'INVALID'))->toThrow(RuntimeException::class);
 });
 
+test('where() returns empty iterator when no rows match', function () {
+    $output = iterator_to_array($this->csv->where('id', 9999));
+    expect($output)->toBeEmpty();
+});
+
+test('where() returns count of 0 when no rows match', function () {
+    expect($this->csv->where('id', 9999)->count())->toBe(0);
+});
+
+test('where() chained twice on same column with same value still matches', function () {
+    expect($this->csv->where('id', 1)->where('id', 1)->count())->toBe(1);
+});
+
+test('where() chained with conflicting values on same column returns empty result', function () {
+    expect($this->csv->where('id', 1)->where('id', 2)->count())->toBe(0);
+});
+
 // --- _getColumn exceptions ---
 
 test('_getColumn throws for unknown column name', function () {
@@ -187,6 +240,44 @@ test('_getColumn throws for negative integer index', function () {
 
 test('_getColumn throws for out-of-bounds integer index', function () {
     expect(fn () => $this->csv->max(999))->toThrow(RuntimeException::class);
+});
+
+// --- edge cases ---
+
+test('rows with fewer columns than header are imported with null for missing columns', function () {
+    $file = tempnam(sys_get_temp_dir(), 'csvql_mismatch_');
+    // Short row must come first: an unbound PDO positional parameter defaults to NULL,
+    // but a reused prepared statement retains the previous execution's binding.
+    file_put_contents($file, "id,name,value\n1,Bob\n2,Alice,100\n");
+
+    try {
+        $csv = new CSVql($file);
+        $rows = iterator_to_array($csv);
+
+        expect($rows)->toHaveCount(2);
+        expect($rows[0]['value'])->toBeNull();
+        expect($rows[1]['value'])->toBe('100');
+    } finally {
+        unlink($file);
+    }
+});
+
+test('handles unicode and special character values', function () {
+    $file = tempnam(sys_get_temp_dir(), 'csvql_unicode_');
+    file_put_contents($file, "id,name\n1,こんにちは\n2,Ångström\n3,café\n4,\u{1F600}\n", FILE_APPEND);
+
+    try {
+        $csv = new CSVql($file);
+        $rows = iterator_to_array($csv);
+
+        expect($rows)->toHaveCount(4);
+        expect($rows[0]['name'])->toBe('こんにちは');
+        expect($rows[1]['name'])->toBe('Ångström');
+        expect($rows[2]['name'])->toBe('café');
+        expect($rows[3]['name'])->toBe("\u{1F600}");
+    } finally {
+        unlink($file);
+    }
 });
 
 // --- group ---
