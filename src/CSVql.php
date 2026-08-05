@@ -8,6 +8,7 @@ use IteratorAggregate;
 use Generator;
 use PDOStatement;
 use RuntimeException;
+use Throwable;
 
 /**
  * @implements IteratorAggregate<string|int, mixed>
@@ -63,7 +64,14 @@ class CSVql implements Countable, IteratorAggregate
             throw new RuntimeException("File {$this->source} is not readable");
         }
 
-        $this->pdo = new PDO('sqlite::memory:');
+        $this->pdo = new PDO(
+            'sqlite::memory:',
+            null,
+            null,
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            ]
+        );
 
         $this->_import();
     }
@@ -83,7 +91,7 @@ class CSVql implements Countable, IteratorAggregate
         }
 
         $colCount    = count($firstRow);
-        $internalNames = array_map(fn($i) => "col{$i}", range(0, $colCount - 1));
+        $internalNames = array_map(fn ($i) => "col{$i}", range(0, $colCount - 1));
 
         if ($this->header) {
             $this->columns = $firstRow;
@@ -96,7 +104,7 @@ class CSVql implements Countable, IteratorAggregate
 
         // Build SQL-quoted identifiers; escape any " in column names as ""
         $this->columnSqls = array_map(
-            fn($name) => '"' . str_replace('"', '""', $name) . '"',
+            fn ($name) => '"' . str_replace('"', '""', $name) . '"',
             $this->columns
         );
 
@@ -109,7 +117,7 @@ class CSVql implements Countable, IteratorAggregate
 
         $this->pdo->exec(sprintf(
             'CREATE TABLE "data" (%s)',
-            implode(', ', array_map(fn($id) => "{$id} TEXT NULL DEFAULT NULL", $this->columnSqls))
+            implode(', ', array_map(fn ($id) => "{$id} TEXT NULL DEFAULT NULL", $this->columnSqls))
         ));
 
         // Use prepared statement for better performance
@@ -122,10 +130,14 @@ class CSVql implements Countable, IteratorAggregate
         $this->pdo->beginTransaction();
 
         while (($row = fgetcsv($handle, null, $this->separator, $this->enclosure, $this->escape)) !== false) {
-            if ($stmt->execute($row) === false) {
+            try {
+                if ($stmt->execute($row) === false) {
+                    throw new RuntimeException("Failed to insert row: " . implode(', ', $row));
+                }
+            } catch (Throwable $e) {
                 $this->pdo->rollBack();
                 fclose($handle);
-                throw new RuntimeException("Failed to insert row: " . implode(', ', $row));
+                throw $e;
             }
         }
 
