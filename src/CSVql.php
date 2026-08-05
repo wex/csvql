@@ -92,6 +92,8 @@ class CSVql implements Countable, IteratorAggregate
 
         while (($row = fgetcsv($handle, null, $this->separator, $this->enclosure, $this->escape)) !== false) {
             if ($stmt->execute($row) === false) {
+                $this->pdo->rollBack();
+                fclose($handle);
                 throw new RuntimeException("Failed to insert row: " . implode(', ', $row));
             }
         }
