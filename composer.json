@@ -42,6 +42,7 @@
         ],
         "test": "pest",
         "test:coverage": "pest --coverage --coverage-clover=coverage.xml",
+        "test:mutation": "pest --mutate --covered-only",
         "lint": "pint",
         "analyze": "phpstan analyze src"
     }
