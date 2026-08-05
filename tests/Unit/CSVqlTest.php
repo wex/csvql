@@ -171,6 +171,10 @@ test('where() with integer column index', function () {
     expect($output[0]['id'])->toBe('1');
 });
 
+test('where() throws for invalid operator', function () {
+    expect(fn () => $this->csv->where('id', 1, 'INVALID'))->toThrow(RuntimeException::class);
+});
+
 // --- _getColumn exceptions ---
 
 test('_getColumn throws for unknown column name', function () {
