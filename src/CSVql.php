@@ -58,7 +58,7 @@ class CSVql implements Countable, IteratorAggregate
 
     protected function _import(): void
     {
-        $handle = fopen($this->source, 'r');
+        $handle = @fopen($this->source, 'r');
 
         if ($handle === false) {
             throw new RuntimeException("Failed to open file {$this->source}");
