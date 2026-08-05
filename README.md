@@ -1,6 +1,7 @@
 # CSVql
 
 [![ci](https://github.com/wex/csvql/actions/workflows/ci.yaml/badge.svg)](https://github.com/wex/csvql/actions/workflows/ci.yaml)
+[![codecov](https://codecov.io/gh/wex/csvql/graph/badge.svg)](https://codecov.io/gh/wex/csvql)
 
 A SQLite-powered CSV reader for PHP that lets you query CSV files using a fluent, SQL-like interface.
 
