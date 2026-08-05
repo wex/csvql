@@ -55,10 +55,14 @@ class CSVql implements Countable, IteratorAggregate
     {
         $handle = fopen($this->source, 'r');
 
+        if ($handle === false) {
+            throw new RuntimeException("Failed to open file {$this->source}");
+        }
+
         $firstRow = fgetcsv($handle, null, $this->separator, $this->enclosure, $this->escape);
 
         if ($firstRow === false) {
-            throw new \RuntimeException("File '{$this->source}' is empty");
+            throw new RuntimeException("File '{$this->source}' is empty");
         }
 
         $columns = array_map(fn ($column) => "col{$column}", range(0, count($firstRow) - 1));
@@ -87,7 +91,9 @@ class CSVql implements Countable, IteratorAggregate
         $this->pdo->beginTransaction();
 
         while (($row = fgetcsv($handle, null, $this->separator, $this->enclosure, $this->escape)) !== false) {
-            $stmt->execute($row);
+            if ($stmt->execute($row) === false) {
+                throw new RuntimeException("Failed to insert row: " . implode(', ', $row));
+            }
         }
 
         $this->pdo->commit();
@@ -120,7 +126,7 @@ class CSVql implements Countable, IteratorAggregate
 
     protected function _getColumn(int|string $column): int
     {
-        if (gettype($column) === 'integer') {
+        if (is_int($column)) {
             $columnIndex = $column;
         } else {
             $columnIndex = array_search($column, $this->columns);
@@ -137,18 +143,20 @@ class CSVql implements Countable, IteratorAggregate
         return $columnIndex;
     }
 
-    protected function _execute(string $query): PDOStatement|false
+    protected function _execute(string $query): PDOStatement
     {
-        return $this->pdo->query($query);
+        $result =  $this->pdo->query($query);
+
+        if ($result === false) {
+            throw new RuntimeException("Failed to execute query: {$query}");
+        }
+
+        return $result;
     }
 
     public function getIterator(): Generator
     {
         $result = $this->_execute($this->_getQuery());
-
-        if ($result === false) { // @codeCoverageIgnore
-            throw new RuntimeException('Failed to execute query'); // @codeCoverageIgnore
-        } // @codeCoverageIgnore
 
         while ($row = $result->fetch(PDO::FETCH_ASSOC)) {
             if ($this->header) {
@@ -204,7 +212,13 @@ class CSVql implements Countable, IteratorAggregate
 
     public function where(int|string $column, int|float|string $value, string $operator = '='): self
     {
-        $castAs = gettype($value) === 'string' ? 'TEXT' : 'REAL';
+        $validOperators = ['=', '<>', '!=', '<', '>', '<=', '>=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'BETWEEN', 'NOT BETWEEN', 'IS', 'IS NOT'];
+
+        if (!in_array($operator, $validOperators)) {
+            throw new RuntimeException("Invalid operator: {$operator}");
+        }
+
+        $castAs = is_string($value) ? 'TEXT' : 'REAL';
         $columnNumber = $this->_getColumn($column);
 
         $this->where[] = sprintf('CAST("col%d" AS %s) %s %s', $columnNumber, $castAs, $operator, $this->pdo->quote($value));
