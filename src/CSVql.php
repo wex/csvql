@@ -31,6 +31,11 @@ class CSVql implements Countable, IteratorAggregate
      */
     protected array $columns = [];
 
+    /**
+     * @var array<string, int>
+     */
+    protected array $columnIndex = [];
+
     public function __construct(
         public readonly string $source,
         public readonly string $separator = ',',
@@ -101,6 +106,8 @@ class CSVql implements Countable, IteratorAggregate
         $this->pdo->commit();
 
         fclose($handle);
+
+        $this->columnIndex = array_flip($this->columns);
     }
 
     protected function _getWhere(): string
@@ -131,11 +138,11 @@ class CSVql implements Countable, IteratorAggregate
         if (is_int($column)) {
             $columnIndex = $column;
         } else {
-            $columnIndex = array_search($column, $this->columns);
-        }
+            if (!array_key_exists($column, $this->columnIndex)) {
+                throw new RuntimeException("Column '{$column}' not found");
+            }
 
-        if ($columnIndex === false) {
-            throw new RuntimeException("Column '{$column}' not found");
+            $columnIndex = $this->columnIndex[$column];
         }
 
         if ($columnIndex < 0 || $columnIndex >= count($this->columns)) {
