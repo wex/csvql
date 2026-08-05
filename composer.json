@@ -9,9 +9,9 @@
         "ext-sqlite3": "*"
     },
     "require-dev": {
-        "pestphp/pest": "^4.4",
-        "laravel/pint": "^1.29",
-        "phpstan/phpstan": "^2.1"
+        "pestphp/pest": "^4.7",
+        "laravel/pint": "^1.30",
+        "phpstan/phpstan": "^2.2"
     },
     "autoload": {
         "psr-4": {
@@ -41,6 +41,7 @@
             "@test"
         ],
         "test": "pest",
+        "test:coverage": "pest --coverage --coverage-clover=coverage.xml",
         "lint": "pint",
         "analyze": "phpstan analyze src"
     }
