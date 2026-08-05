@@ -32,9 +32,21 @@ class CSVql implements Countable, IteratorAggregate
     protected array $columns = [];
 
     /**
-     * @var array<string, int>
+     * SQL-quoted identifiers for each column, indexed by position.
+     *
+     * @var array<int, string>
+     */
+    protected array $columnSqls = [];
+
+    /**
+     * Maps column name → SQL-quoted identifier for O(1) lookup.
+     *
+     * @var array<string, string>
      */
     protected array $columnIndex = [];
+
+    /** @var int */
+    protected int $columnCount = 0;
 
     public function __construct(
         public readonly string $source,
@@ -70,27 +82,41 @@ class CSVql implements Countable, IteratorAggregate
             throw new RuntimeException("File '{$this->source}' is empty");
         }
 
-        $columns = array_map(fn ($column) => "col{$column}", range(0, count($firstRow) - 1));
-        $this->pdo->exec(sprintf(
-            'CREATE TABLE "data" (%s)',
-            implode(', ', array_map(fn ($column) => sprintf('"%s" TEXT NULL DEFAULT NULL', $column), $columns))
-        ));
+        $colCount    = count($firstRow);
+        $internalNames = array_map(fn($i) => "col{$i}", range(0, $colCount - 1));
+
         if ($this->header) {
             $this->columns = $firstRow;
         } else {
-            $this->columns = $columns;
+            $this->columns = $internalNames;
             rewind($handle);
         }
+
+        $this->columnCount = $colCount;
+
+        // Build SQL-quoted identifiers; escape any " in column names as ""
+        $this->columnSqls = array_map(
+            fn($name) => '"' . str_replace('"', '""', $name) . '"',
+            $this->columns
+        );
+
+        // name → SQL id for O(1) lookup in _getColumn()
+        $this->columnIndex = array_combine($this->columns, $this->columnSqls);
+
+        // Ensure temp tables (used by GROUP BY / DISTINCT) stay in memory
+        $this->pdo->exec('PRAGMA temp_store = MEMORY');
+        $this->pdo->exec('PRAGMA synchronous = OFF');
+
+        $this->pdo->exec(sprintf(
+            'CREATE TABLE "data" (%s)',
+            implode(', ', array_map(fn($id) => "{$id} TEXT NULL DEFAULT NULL", $this->columnSqls))
+        ));
 
         // Use prepared statement for better performance
         $stmt = $this->pdo->prepare(sprintf(
             'INSERT INTO "data" VALUES (%s)',
-            implode(', ', array_fill(0, count($columns), '?'))
+            implode(', ', array_fill(0, $colCount, '?'))
         ));
-
-        // Disable synchronous and journal mode for faster inserts
-        $this->pdo->exec('PRAGMA synchronous = OFF');
-        $this->pdo->exec('PRAGMA journal_mode = MEMORY');
 
         // Use transaction for faster inserts
         $this->pdo->beginTransaction();
@@ -106,8 +132,6 @@ class CSVql implements Countable, IteratorAggregate
         $this->pdo->commit();
 
         fclose($handle);
-
-        $this->columnIndex = array_flip($this->columns);
     }
 
     protected function _getWhere(): string
@@ -133,28 +157,26 @@ class CSVql implements Countable, IteratorAggregate
         return sprintf('SELECT %s FROM "data" %s %s', $columns, $this->_getWhere(), $this->_getGroup());
     }
 
-    protected function _getColumn(int|string $column): int
+    protected function _getColumn(int|string $column): string
     {
         if (is_int($column)) {
-            $columnIndex = $column;
-        } else {
-            if (!array_key_exists($column, $this->columnIndex)) {
-                throw new RuntimeException("Column '{$column}' not found");
+            if ($column < 0 || $column >= $this->columnCount) {
+                throw new RuntimeException("Column {$column} is out of bounds");
             }
 
-            $columnIndex = $this->columnIndex[$column];
+            return $this->columnSqls[$column];
         }
 
-        if ($columnIndex < 0 || $columnIndex >= count($this->columns)) {
-            throw new RuntimeException("Column {$columnIndex} is out of bounds");
+        if (!array_key_exists($column, $this->columnIndex)) {
+            throw new RuntimeException("Column '{$column}' not found");
         }
 
-        return $columnIndex;
+        return $this->columnIndex[$column];
     }
 
     protected function _execute(string $query): PDOStatement
     {
-        $result =  $this->pdo->query($query);
+        $result = $this->pdo->query($query);
 
         if ($result === false) {
             throw new RuntimeException("Failed to execute query: {$query}");
@@ -165,14 +187,11 @@ class CSVql implements Countable, IteratorAggregate
 
     public function getIterator(): Generator
     {
-        $result = $this->_execute($this->_getQuery());
+        $result    = $this->_execute($this->_getQuery());
+        $fetchMode = $this->header ? PDO::FETCH_ASSOC : PDO::FETCH_NUM;
 
-        while ($row = $result->fetch(PDO::FETCH_ASSOC)) {
-            if ($this->header) {
-                yield array_combine($this->columns, $row);
-            } else {
-                yield array_values($row);
-            }
+        while ($row = $result->fetch($fetchMode)) {
+            yield $row;
         }
     }
 
@@ -183,30 +202,30 @@ class CSVql implements Countable, IteratorAggregate
 
     public function max(int|string $column): mixed
     {
-        $columnNumber = $this->_getColumn($column);
+        $colId = $this->_getColumn($column);
 
-        return $this->_execute($this->_getQuery(sprintf('MAX(CAST("col%d" AS REAL))', $columnNumber)))->fetchColumn();
+        return $this->_execute($this->_getQuery(sprintf('MAX(CAST(%s AS REAL))', $colId)))->fetchColumn();
     }
 
     public function min(int|string $column): mixed
     {
-        $columnNumber = $this->_getColumn($column);
+        $colId = $this->_getColumn($column);
 
-        return $this->_execute($this->_getQuery(sprintf('MIN(CAST("col%d" AS REAL))', $columnNumber)))->fetchColumn();
+        return $this->_execute($this->_getQuery(sprintf('MIN(CAST(%s AS REAL))', $colId)))->fetchColumn();
     }
 
     public function sum(int|string $column): mixed
     {
-        $columnNumber = $this->_getColumn($column);
+        $colId = $this->_getColumn($column);
 
-        return $this->_execute($this->_getQuery(sprintf('SUM(CAST("col%d" AS REAL))', $columnNumber)))->fetchColumn();
+        return $this->_execute($this->_getQuery(sprintf('SUM(CAST(%s AS REAL))', $colId)))->fetchColumn();
     }
 
     public function avg(int|string $column): mixed
     {
-        $columnNumber = $this->_getColumn($column);
+        $colId = $this->_getColumn($column);
 
-        return $this->_execute($this->_getQuery(sprintf('AVG(CAST("col%d" AS REAL))', $columnNumber)))->fetchColumn();
+        return $this->_execute($this->_getQuery(sprintf('AVG(CAST(%s AS REAL))', $colId)))->fetchColumn();
     }
 
     /**
@@ -214,9 +233,9 @@ class CSVql implements Countable, IteratorAggregate
      */
     public function distinct(int|string $column): array
     {
-        $columnNumber = $this->_getColumn($column);
+        $colId = $this->_getColumn($column);
 
-        return $this->_execute($this->_getQuery(sprintf('DISTINCT "col%d"', $columnNumber)))->fetchAll(PDO::FETCH_COLUMN);
+        return $this->_execute($this->_getQuery(sprintf('DISTINCT %s', $colId)))->fetchAll(PDO::FETCH_COLUMN);
     }
 
     public function where(int|string $column, int|float|string $value, string $operator = '='): self
@@ -227,19 +246,21 @@ class CSVql implements Countable, IteratorAggregate
             throw new RuntimeException("Invalid operator: {$operator}");
         }
 
-        $castAs = is_string($value) ? 'TEXT' : 'REAL';
-        $columnNumber = $this->_getColumn($column);
+        $colId = $this->_getColumn($column);
 
-        $this->where[] = sprintf('CAST("col%d" AS %s) %s %s', $columnNumber, $castAs, $operator, $this->pdo->quote($value));
+        // Columns are stored as TEXT; only cast to REAL for numeric comparisons
+        if (is_string($value)) {
+            $this->where[] = sprintf('%s %s %s', $colId, $operator, $this->pdo->quote($value));
+        } else {
+            $this->where[] = sprintf('CAST(%s AS REAL) %s %s', $colId, $operator, $this->pdo->quote((string) $value));
+        }
 
         return $this;
     }
 
     public function group(int|string $column): self
     {
-        $columnNumber = $this->_getColumn($column);
-
-        $this->group[] = sprintf('"col%d"', $columnNumber);
+        $this->group[] = $this->_getColumn($column);
 
         return $this;
     }
